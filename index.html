@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>鱼灯点云粒子模型 - 3D查看器</title>
+    <link rel="stylesheet" href="./css/style.css">
+</head>
+<body>
+    <div id="container">
+        <div id="canvas-container"></div>
+
+        <div id="ui-panel">
+            <h1 id="panel-title">🐟 鱼灯点云模型</h1>
+
+            <div class="control-section">
+                <h3>性能设置</h3>
+                <div class="control-item">
+                    <label>粒子密度</label>
+                    <select id="particle-density">
+                        <option value="0.1">10% (极速)</option>
+                        <option value="0.25">25% (流畅)</option>
+                        <option value="0.5" selected>50% (平衡)</option>
+                        <option value="0.75">75% (高质量)</option>
+                        <option value="1">100% (原始)</option>
+                    </select>
+                </div>
+                <div class="control-item">
+                    <label>扩散效果</label>
+                    <input type="checkbox" id="diffusion-effect" checked>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <h3>手势控制</h3>
+                <button id="toggle-camera" class="btn">开启摄像头</button>
+                <div id="gesture-status" class="gesture-status inactive">摄像头未开启</div>
+            </div>
+
+            <div class="control-section">
+                <h3>粒子设置</h3>
+                <div class="control-item">
+                    <label>粒子大小</label>
+                    <input type="range" id="particle-size" min="0.002" max="0.08" step="0.002" value="0.015">
+                </div>
+                <div class="control-item">
+                    <label>粒子颜色</label>
+                    <input type="color" id="particle-color" value="#4fc3f7">
+                </div>
+                <div class="control-item">
+                    <label>旋转速度</label>
+                    <input type="range" id="rotation-speed" min="0" max="0.02" step="0.001" value="0.003">
+                </div>
+            </div>
+
+            <div class="control-section">
+                <h3>视图控制</h3>
+                <button id="reset-view" class="btn btn-secondary">重置视图</button>
+            </div>
+
+            <div class="stats">
+                <div>原始粒子: <span id="original-count">--</span></div>
+                <div>显示粒子: <span id="particle-count">--</span></div>
+                <div>当前缩放: <span id="current-zoom">1.0x</span></div>
+                <div>手势: <span id="gesture-state-text">无</span></div>
+            </div>
+        </div>
+
+        <div id="video-container">
+            <video id="webcam" autoplay playsinline></video>
+        </div>
+
+        <div class="instructions">
+            <h4>操作说明</h4>
+            <ul>
+                <li><strong>鼠标拖拽</strong> - 旋转视角</li>
+                <li><strong>滚轮</strong> - 缩放视图</li>
+                <li><strong>张手 ✋</strong> - 持续放大+扩散</li>
+                <li><strong>握拳 ✊</strong> - 持续缩小+聚集</li>
+            </ul>
+        </div>
+
+        <div id="gesture-hint">✋</div>
+        <div id="gesture-indicator" class="gesture-indicator"></div>
+        <div class="fps-counter">FPS: <span id="fps">0</span></div>
+
+        <div id="loading" class="loading-overlay">
+            <div class="spinner"></div>
+            <p id="loading-text">正在加载点云数据...</p>
+        </div>
+    </div>
+
+    <script src="./config.js"></script>
+    <script src="./libs/three/three.min.js"></script>
+    <script src="./libs/three/OrbitControls.js"></script>
+    <script src="./libs/mediapipe/camera_utils.js"></script>
+    <script src="./libs/mediapipe/control_utils.js"></script>
+    <script src="./libs/mediapipe/drawing_utils.js"></script>
+    <script src="./libs/mediapipe/hands.js"></script>
+    <script src="./js/app.js"></script>
+</body>
+</html>
