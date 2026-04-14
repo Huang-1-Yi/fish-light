@@ -1,27 +1,16 @@
+// fish-light GitHub Pages 配置（参考 birthday 的 config.js 思路）
+// 你只需要改这里，不用动 HTML。
 window.FISH_LIGHT_CONFIG = {
-    title: "鱼灯点云模型",
-    xyzFile: "./ImageToStl.com_20251211110417_d743b9d5.xyz",
-    mediaPipeBasePath: "./libs/mediapipe/",
-    defaults: {
-        particleDensity: "0.5",
-        particleSize: 0.015,
-        particleColor: "#4fc3f7",
-        rotationSpeed: 0.003,
-        diffusionEnabled: true,
-        cameraZ: 3
-    },
-    uiText: {
-        panelTitle: "🐟 鱼灯点云模型",
-        loadingText: "正在加载点云数据...",
-        selectFilePrompt: "请点击选择XYZ文件按钮加载数据",
-        selectFileButton: "选择XYZ文件",
-        processingText: "正在处理数据...",
-        loadFailedPrefix: "加载失败: ",
-        cameraOff: "摄像头未开启",
-        cameraOn: "摄像头已开启",
-        cameraStartFailed: "摄像头启动失败",
-        gestureNone: "未检测到手势",
-        gestureOpen: "张手 ✋ - 放大+扩散",
-        gestureFist: "握拳 ✊ - 缩小+聚集"
-    }
+  title: "鱼灯点云粒子模型",
+  description: "基于 Three.js 的点云粒子 3D 查看器（支持鼠标/触控 + 可选手势控制）",
+
+  // viewer 页面相对当前 fish-light/ 的路径。
+  // 推荐把 GitHub Pages 发布目录设为 fishlightv3/（或仓库根），这样 ../fish-light-viewer.html 能访问到。
+  viewerPath: "../fish-light-viewer.html",
+
+  // viewer 使用的 .xyz 数据文件（目前 fish-light-viewer.html 默认会尝试同目录加载；如果你后续给 viewer 加了参数支持，可用到它）
+  // xyzUrl: "../ImageToStl.com_20251211110417_d743b9d5.xyz",
+
+  // true: 默认在页面内 iframe 预览；false: 只显示“打开查看器”按钮
+  embedViewer: true
 };
