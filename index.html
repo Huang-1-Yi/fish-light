@@ -515,20 +515,219 @@
             if (p) p.textContent = text;
         }
 
-        function updateLoadingProgress(phaseText, done, total) {
+        function updateLoadingProgress(phaseText, done, total, extraText) {
             const bar = document.getElementById('load-progress-bar');
             const txt = document.getElementById('load-progress-text');
             const track = document.querySelector('.progress-track');
 
-            const safeTotal = Math.max(1, total || 0);
-            const pct = Math.max(0, Math.min(100, (done / safeTotal) * 100));
+            const hasTotal = typeof total === 'number' && isFinite(total) && total > 0;
+            const safeTotal = hasTotal ? total : 1;
+            const pct = hasTotal ? Math.max(0, Math.min(100, (done / safeTotal) * 100)) : 0;
 
-            if (bar) bar.style.width = pct.toFixed(1) + '%';
-            if (track) track.setAttribute('aria-valuenow', String(Math.round(pct)));
+            if (bar && hasTotal) bar.style.width = pct.toFixed(1) + '%';
+            if (track && hasTotal) track.setAttribute('aria-valuenow', String(Math.round(pct)));
 
             const doneStr = (done ?? 0).toLocaleString();
-            const totalStr = (total ?? 0).toLocaleString();
-            if (txt) txt.textContent = `${phaseText} ${doneStr}/${totalStr} (${pct.toFixed(1)}%)`;
+            const totalStr = hasTotal ? total.toLocaleString() : '';
+            const baseText = hasTotal
+                ? `${phaseText} ${doneStr}/${totalStr} (${pct.toFixed(1)}%)`
+                : `${phaseText} ${doneStr}`;
+            const suffix = extraText ? ` | ${extraText}` : '';
+            if (txt) txt.textContent = baseText + suffix;
+        }
+
+        function formatBytes(bytes) {
+            const n = Number(bytes);
+            if (!isFinite(n) || n <= 0) return '0B';
+            const units = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
+            const v = n / Math.pow(1024, i);
+            return (i === 0 ? String(Math.round(v)) : v.toFixed(1)) + units[i];
+        }
+
+        function showXYZFilePicker(message) {
+            document.querySelector('#loading p').textContent = message || '请点击选择XYZ文件按钮加载数据';
+            document.querySelector('#loading .spinner').style.display = 'none';
+
+            const existingBtn = document.querySelector('#loading button');
+            if (existingBtn) existingBtn.remove();
+
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            fileInput.accept = '.xyz';
+            fileInput.style.display = 'none';
+            fileInput.addEventListener('change', handleFileSelect);
+            document.body.appendChild(fileInput);
+
+            const selectBtn = document.createElement('button');
+            selectBtn.textContent = '选择XYZ文件';
+            selectBtn.className = 'btn';
+            selectBtn.style.marginTop = '20px';
+            selectBtn.onclick = () => fileInput.click();
+            document.querySelector('#loading').appendChild(selectBtn);
+        }
+
+        function getXyzUrlCandidates() {
+            const params = new URLSearchParams(location.search);
+            const fromQuery = params.get('xyz');
+            if (fromQuery) return [fromQuery];
+
+            const name = 'ImageToStl.com_20251211110417_d743b9d5.xyz';
+            return [
+                `./${name}`,
+                name,
+                `./data/${name}`,
+                `../${name}`,
+            ];
+        }
+
+        async function fetchFirstAvailable(urls) {
+            for (const url of urls) {
+                try {
+                    const resp = await fetch(url, { cache: 'no-store' });
+                    if (resp.ok) return { url, resp };
+                } catch (e) {
+                    // continue
+                }
+            }
+            return null;
+        }
+
+        async function processXYZReadableStreamAsync(stream, totalBytes) {
+            const reader = stream.getReader();
+            const decoder = new TextDecoder();
+
+            let downloadedBytes = 0;
+            let buffer = '';
+
+            const estimatePoints = totalBytes ? Math.max(1000, Math.ceil(totalBytes / 30)) : 200000;
+            let capacity = estimatePoints;
+            let positions = new Float32Array(capacity * 3);
+            let pointCount = 0;
+
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+            let minZ = Infinity, maxZ = -Infinity;
+
+            function ensureCapacity(nextCount) {
+                if (nextCount <= capacity) return;
+                let newCap = capacity;
+                while (newCap < nextCount) newCap = Math.floor(newCap * 1.5) + 1;
+                const next = new Float32Array(newCap * 3);
+                next.set(positions);
+                positions = next;
+                capacity = newCap;
+            }
+
+            function parseLine(line) {
+                const s = line.trim();
+                if (!s) return;
+                const parts = s.split(/\s+/);
+                if (parts.length < 3) return;
+                const x = parseFloat(parts[0]);
+                const y = parseFloat(parts[1]);
+                const z = parseFloat(parts[2]);
+                if (isNaN(x) || isNaN(y) || isNaN(z)) return;
+
+                ensureCapacity(pointCount + 1);
+                const base = pointCount * 3;
+                positions[base] = x;
+                positions[base + 1] = y;
+                positions[base + 2] = z;
+                pointCount++;
+
+                minX = Math.min(minX, x);
+                maxX = Math.max(maxX, x);
+                minY = Math.min(minY, y);
+                maxY = Math.max(maxY, y);
+                minZ = Math.min(minZ, z);
+                maxZ = Math.max(maxZ, z);
+            }
+
+            setLoadingText('正在下载并解析点云数据...');
+            updateLoadingProgress('下载', 0, totalBytes || 0, '解析 0 点');
+
+            let lastUiUpdate = 0;
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                if (value) {
+                    downloadedBytes += value.byteLength;
+                    buffer += decoder.decode(value, { stream: true });
+
+                    let start = 0;
+                    while (true) {
+                        const idx = buffer.indexOf('\n', start);
+                        if (idx === -1) break;
+                        const line = buffer.slice(start, idx).replace(/\r$/, '');
+                        parseLine(line);
+                        start = idx + 1;
+                    }
+                    buffer = buffer.slice(start);
+                }
+
+                // 每隔一小段时间更新一次 UI，避免过于频繁
+                const now = performance.now();
+                if (now - lastUiUpdate > 60) {
+                    const extra = `解析 ${pointCount.toLocaleString()} 点`;
+                    if (totalBytes && totalBytes > 0) {
+                        updateLoadingProgress('下载', downloadedBytes, totalBytes, extra);
+                    } else {
+                        updateLoadingProgress('下载', downloadedBytes, 0, extra);
+                    }
+                    lastUiUpdate = now;
+                    await nextFrame();
+                }
+            }
+
+            // flush 最后一行
+            buffer += decoder.decode();
+            if (buffer.trim()) parseLine(buffer);
+
+            // 收缩到刚好大小（避免手机内存浪费）
+            const usedLen = pointCount * 3;
+            let usedPositions = positions;
+            if (positions.length > usedLen * 1.2) {
+                usedPositions = new Float32Array(usedLen);
+                usedPositions.set(positions.subarray(0, usedLen));
+            } else {
+                usedPositions = positions.subarray(0, usedLen);
+            }
+
+            // 居中 + 生成颜色（合并为一次遍历）
+            const centerX = (minX + maxX) / 2;
+            const centerY = (minY + maxY) / 2;
+            const centerZ = (minZ + maxZ) / 2;
+            const rangeZ = (maxZ - minZ) || 1;
+            const colors = new Float32Array(usedLen);
+            const color = new THREE.Color();
+
+            const CHUNK_POINTS = 8000;
+            setLoadingText('正在构建粒子数据...');
+            updateLoadingProgress('构建', 0, pointCount);
+            for (let start = 0; start < pointCount; start += CHUNK_POINTS) {
+                const end = Math.min(start + CHUNK_POINTS, pointCount);
+                for (let i = start; i < end; i++) {
+                    const base = i * 3;
+                    usedPositions[base] -= centerX;
+                    usedPositions[base + 1] -= centerY;
+                    usedPositions[base + 2] -= centerZ;
+
+                    const zCentered = usedPositions[base + 2];
+                    const zNorm = (zCentered - (minZ - centerZ)) / rangeZ;
+                    const hue = 0.5 + zNorm * 0.2;
+                    color.setHSL(Math.max(0, Math.min(1, hue)), 0.9, 0.6);
+                    colors[base] = color.r;
+                    colors[base + 1] = color.g;
+                    colors[base + 2] = color.b;
+                }
+                updateLoadingProgress('构建', end, pointCount);
+                await nextFrame();
+            }
+
+            originalPositions = usedPositions;
+            particleColors = colors;
+            document.getElementById('original-count').textContent = pointCount;
         }
 
         // 初始化Three.js场景
@@ -571,159 +770,175 @@
             window.addEventListener('resize', onWindowResize, false);
         }
 
-        // 加载XYZ文件
+        // 加载XYZ文件（优先流式解析，手机更稳定）
         async function loadXYZFile() {
             try {
-                let text = null;
-                
-                try {
-                    const response = await fetch('ImageToStl.com_20251211110417_d743b9d5.xyz');
-                    if (response.ok) {
-                        text = await response.text();
-                    }
-                } catch (e) {
-                    console.log('Fetch失败，尝试其他方式...');
-                }
-                
-                if (!text) {
-                    document.querySelector('#loading p').textContent = '请点击选择XYZ文件按钮加载数据';
-                    document.querySelector('#loading .spinner').style.display = 'none';
-                    
-                    const fileInput = document.createElement('input');
-                    fileInput.type = 'file';
-                    fileInput.accept = '.xyz';
-                    fileInput.style.display = 'none';
-                    fileInput.addEventListener('change', handleFileSelect);
-                    document.body.appendChild(fileInput);
-                    
-                    const selectBtn = document.createElement('button');
-                    selectBtn.textContent = '选择XYZ文件';
-                    selectBtn.className = 'btn';
-                    selectBtn.style.marginTop = '20px';
-                    selectBtn.onclick = () => fileInput.click();
-                    document.querySelector('#loading').appendChild(selectBtn);
+                const candidates = getXyzUrlCandidates();
+                const found = await fetchFirstAvailable(candidates);
+                if (!found) {
+                    showXYZFilePicker('未找到默认XYZ文件（可在 URL 加 ?xyz=路径 指定，或手动选择本地文件）');
                     return;
                 }
-                
-                await processXYZDataAsync(text);
-                
+
+                const { url, resp } = found;
+                const totalBytes = parseInt(resp.headers.get('Content-Length') || '0', 10);
+                setLoadingText(`正在加载点云数据：${url}`);
+                updateLoadingProgress('下载', 0, totalBytes || 0, '解析 0 点');
+
+                if (resp.body && typeof resp.body.getReader === 'function') {
+                    await processXYZReadableStreamAsync(resp.body, totalBytes);
+                } else {
+                    // 极少数旧浏览器：退回到整文本读取（可能占内存），失败则提示手动选择
+                    const text = await resp.text();
+                    await processXYZDataAsync(text);
+                }
+
+                // 根据密度设置创建显示粒子
+                setLoadingText('正在生成粒子...');
+                await nextFrame();
+                updateParticleDensity();
+                document.getElementById('loading').classList.add('hidden');
             } catch (error) {
                 console.error('加载XYZ文件失败:', error);
-                document.querySelector('#loading p').textContent = '加载失败: ' + error.message;
+                showXYZFilePicker('加载失败（可尝试手动选择本地XYZ文件）：' + (error?.message || String(error)));
             }
         }
         
         function handleFileSelect(event) {
             const file = event.target.files[0];
             if (!file) return;
-            
+
+            document.querySelector('#loading .spinner').style.display = 'block';
+            setLoadingText('正在读取本地文件并解析...');
+            const btn = document.querySelector('#loading button');
+            if (btn) btn.remove();
+
+            // 优先用流式读取（移动端更省内存）
+            if (file.stream && typeof file.stream === 'function') {
+                (async () => {
+                    await processXYZReadableStreamAsync(file.stream(), file.size);
+                    setLoadingText('正在生成粒子...');
+                    await nextFrame();
+                    updateParticleDensity();
+                    document.getElementById('loading').classList.add('hidden');
+                })();
+                return;
+            }
+
+            // 旧浏览器回退：一次性读入文本
             const reader = new FileReader();
             reader.onload = function(e) {
-                document.querySelector('#loading .spinner').style.display = 'block';
-                document.querySelector('#loading p').textContent = '正在处理数据...';
-                const btn = document.querySelector('#loading button');
-                if (btn) btn.remove();
-                
                 setTimeout(async () => {
                     await processXYZDataAsync(e.target.result);
+                    setLoadingText('正在生成粒子...');
+                    await nextFrame();
+                    updateParticleDensity();
+                    document.getElementById('loading').classList.add('hidden');
                 }, 50);
             };
             reader.readAsText(file);
         }
         
-        // 处理XYZ数据 - 带降采样（分块 + 进度条，避免几十万行时页面卡死）
+        // 处理XYZ数据（文本回退路径）：TypedArray + 分块更新进度
+        // 注意：此函数只负责生成 originalPositions/particleColors，不负责生成粒子与隐藏 loading。
         async function processXYZDataAsync(text) {
             const lines = text.trim().split('\n');
             const totalLines = lines.length;
+            const CHUNK_LINES = 5000;
 
-            const CHUNK = 5000; // 每批处理多少行；越大越快但越容易卡顿
-
-            // 阶段 1/3：解析与统计范围
-            setLoadingText('正在处理点云数据...');
+            setLoadingText('正在解析点云数据...');
             updateLoadingProgress('解析', 0, totalLines);
 
-            const allPoints = [];
+            // 预估容量：按“每行≈1个点”估算，避免频繁扩容
+            let capacity = Math.max(1000, totalLines);
+            let positions = new Float32Array(capacity * 3);
+            let count = 0;
             let minX = Infinity, maxX = -Infinity;
             let minY = Infinity, maxY = -Infinity;
             let minZ = Infinity, maxZ = -Infinity;
 
-            for (let start = 0; start < totalLines; start += CHUNK) {
-                const end = Math.min(start + CHUNK, totalLines);
+            function ensureCapacity(nextCount) {
+                if (nextCount <= capacity) return;
+                let newCap = capacity;
+                while (newCap < nextCount) newCap = Math.floor(newCap * 1.5) + 1;
+                const next = new Float32Array(newCap * 3);
+                next.set(positions);
+                positions = next;
+                capacity = newCap;
+            }
+
+            for (let start = 0; start < totalLines; start += CHUNK_LINES) {
+                const end = Math.min(start + CHUNK_LINES, totalLines);
                 for (let i = start; i < end; i++) {
-                    const parts = lines[i].trim().split(/\s+/);
-                    if (parts.length >= 3) {
-                        const x = parseFloat(parts[0]);
-                        const y = parseFloat(parts[1]);
-                        const z = parseFloat(parts[2]);
-                        if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
-                            allPoints.push({ x, y, z });
-                            minX = Math.min(minX, x);
-                            maxX = Math.max(maxX, x);
-                            minY = Math.min(minY, y);
-                            maxY = Math.max(maxY, y);
-                            minZ = Math.min(minZ, z);
-                            maxZ = Math.max(maxZ, z);
-                        }
-                    }
+                    const s = lines[i].trim();
+                    if (!s) continue;
+                    const parts = s.split(/\s+/);
+                    if (parts.length < 3) continue;
+                    const x = parseFloat(parts[0]);
+                    const y = parseFloat(parts[1]);
+                    const z = parseFloat(parts[2]);
+                    if (isNaN(x) || isNaN(y) || isNaN(z)) continue;
+
+                    ensureCapacity(count + 1);
+                    const base = count * 3;
+                    positions[base] = x;
+                    positions[base + 1] = y;
+                    positions[base + 2] = z;
+                    count++;
+
+                    minX = Math.min(minX, x);
+                    maxX = Math.max(maxX, x);
+                    minY = Math.min(minY, y);
+                    maxY = Math.max(maxY, y);
+                    minZ = Math.min(minZ, z);
+                    maxZ = Math.max(maxZ, z);
                 }
-                updateLoadingProgress('解析', end, totalLines);
+                updateLoadingProgress('解析', end, totalLines, `有效 ${count.toLocaleString()} 点`);
                 await nextFrame();
             }
 
-            // 阶段 2/3：居中
+            const usedLen = count * 3;
+            let usedPositions = positions;
+            if (positions.length > usedLen * 1.2) {
+                usedPositions = new Float32Array(usedLen);
+                usedPositions.set(positions.subarray(0, usedLen));
+            } else {
+                usedPositions = positions.subarray(0, usedLen);
+            }
+
             const centerX = (minX + maxX) / 2;
             const centerY = (minY + maxY) / 2;
             const centerZ = (minZ + maxZ) / 2;
-
-            updateLoadingProgress('居中', 0, allPoints.length);
-            for (let start = 0; start < allPoints.length; start += CHUNK) {
-                const end = Math.min(start + CHUNK, allPoints.length);
-                for (let i = start; i < end; i++) {
-                    const p = allPoints[i];
-                    p.x -= centerX;
-                    p.y -= centerY;
-                    p.z -= centerZ;
-                }
-                updateLoadingProgress('居中', end, allPoints.length);
-                await nextFrame();
-            }
-
-            // 阶段 3/3：构建缓冲区（positions/colors）
-            originalPositions = new Float32Array(allPoints.length * 3);
-            particleColors = new Float32Array(allPoints.length * 3);
-
             const rangeZ = (maxZ - minZ) || 1;
+            const colors = new Float32Array(usedLen);
             const color = new THREE.Color();
 
-            updateLoadingProgress('构建', 0, allPoints.length);
-            for (let start = 0; start < allPoints.length; start += CHUNK) {
-                const end = Math.min(start + CHUNK, allPoints.length);
+            const CHUNK_POINTS = 8000;
+            setLoadingText('正在构建粒子数据...');
+            updateLoadingProgress('构建', 0, count);
+            for (let start = 0; start < count; start += CHUNK_POINTS) {
+                const end = Math.min(start + CHUNK_POINTS, count);
                 for (let i = start; i < end; i++) {
-                    const p = allPoints[i];
                     const base = i * 3;
-                    originalPositions[base] = p.x;
-                    originalPositions[base + 1] = p.y;
-                    originalPositions[base + 2] = p.z;
+                    usedPositions[base] -= centerX;
+                    usedPositions[base + 1] -= centerY;
+                    usedPositions[base + 2] -= centerZ;
 
-                    const zNorm = (p.z - (minZ - centerZ)) / rangeZ;
+                    const zCentered = usedPositions[base + 2];
+                    const zNorm = (zCentered - (minZ - centerZ)) / rangeZ;
                     const hue = 0.5 + zNorm * 0.2;
                     color.setHSL(Math.max(0, Math.min(1, hue)), 0.9, 0.6);
-                    particleColors[base] = color.r;
-                    particleColors[base + 1] = color.g;
-                    particleColors[base + 2] = color.b;
+                    colors[base] = color.r;
+                    colors[base + 1] = color.g;
+                    colors[base + 2] = color.b;
                 }
-                updateLoadingProgress('构建', end, allPoints.length);
+                updateLoadingProgress('构建', end, count);
                 await nextFrame();
             }
 
-            document.getElementById('original-count').textContent = allPoints.length;
-
-            // 根据密度设置创建显示粒子
-            setLoadingText('正在生成粒子...');
-            await nextFrame();
-            updateParticleDensity();
-
-            document.getElementById('loading').classList.add('hidden');
+            originalPositions = usedPositions;
+            particleColors = colors;
+            document.getElementById('original-count').textContent = count;
         }
 
         // 更新粒子密度
