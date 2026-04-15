@@ -4,47 +4,25 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="robots" content="index,follow" />
-  <title>fish-light</title>
-  <link rel="stylesheet" href="./assets/stylesheet.css" />
-  <script src="./config.js"></script>
+  <title>Redirecting...</title>
+  <meta http-equiv="refresh" content="0; url=viewer.html" />
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: #0b1020;
+      color: #e7eefc;
+    }
+    a { color: inherit; }
+  </style>
 </head>
 <body>
-  <div class="page">
-    <header class="header">
-      <div class="header-inner">
-        <div>
-          <h1 class="title" id="site-title">fish-light</h1>
-          <p class="desc" id="site-desc"></p>
-        </div>
-        <div class="actions">
-          <a class="btn" id="open-viewer" href="../fish-light-viewer.html" target="_blank" rel="noopener">打开查看器（新标签）</a>
-        </div>
-      </div>
-    </header>
+  <p>正在跳转到 <a href="viewer.html">viewer.html</a> ...</p>
 
-    <main class="main">
-      <iframe
-        id="viewer-frame"
-        class="viewer-frame"
-        title="Fish Light Viewer"
-        loading="eager"
-        allow="camera"
-        referrerpolicy="no-referrer"
-      ></iframe>
-
-      <section id="embed-disabled" class="embed-disabled">
-        <div>已关闭内嵌预览（`config.js` 里把 `embedViewer` 改为 true 可打开）。</div>
-        <div style="margin-top: 10px;">你也可以点击右上角按钮在新标签打开查看器。</div>
-      </section>
-    </main>
-
-    <footer class="footer">
-      <div class="footer-inner">
-        <span>GitHub Pages 静态站点入口（fish-light）。</span>
-      </div>
-    </footer>
-  </div>
-
-  <script src="./custom.js"></script>
+  <script>
+    // 使用 replace 避免返回键回到跳转页
+    window.location.replace("viewer.html");
+  </script>
 </body>
 </html>
