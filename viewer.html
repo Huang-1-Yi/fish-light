@@ -169,6 +169,36 @@
             margin-bottom: 20px;
         }
 
+        .progress-wrap {
+            width: min(420px, 86vw);
+            margin-top: 16px;
+        }
+
+        .progress-track {
+            width: 100%;
+            height: 10px;
+            border-radius: 999px;
+            overflow: hidden;
+            background: rgba(255, 255, 255, 0.12);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .progress-bar {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #4fc3f7, #0288d1);
+            transition: width 0.12s ease;
+        }
+
+        .progress-text {
+            margin-top: 8px;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.85);
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            text-align: center;
+            white-space: nowrap;
+        }
+
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
@@ -424,6 +454,12 @@
         <div id="loading" class="loading-overlay">
             <div class="spinner"></div>
             <p>正在加载点云数据...</p>
+            <div class="progress-wrap" aria-label="点云加载进度">
+                <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                    <div id="load-progress-bar" class="progress-bar"></div>
+                </div>
+                <div id="load-progress-text" class="progress-text">0%</div>
+            </div>
         </div>
     </div>
 
@@ -468,6 +504,32 @@
         // 扩散效果
         let diffusionFactor = 0;
         let targetDiffusion = 0;
+
+        // 让浏览器有机会渲染 UI（避免长循环导致页面假死）
+        function nextFrame() {
+            return new Promise(requestAnimationFrame);
+        }
+
+        function setLoadingText(text) {
+            const p = document.querySelector('#loading p');
+            if (p) p.textContent = text;
+        }
+
+        function updateLoadingProgress(phaseText, done, total) {
+            const bar = document.getElementById('load-progress-bar');
+            const txt = document.getElementById('load-progress-text');
+            const track = document.querySelector('.progress-track');
+
+            const safeTotal = Math.max(1, total || 0);
+            const pct = Math.max(0, Math.min(100, (done / safeTotal) * 100));
+
+            if (bar) bar.style.width = pct.toFixed(1) + '%';
+            if (track) track.setAttribute('aria-valuenow', String(Math.round(pct)));
+
+            const doneStr = (done ?? 0).toLocaleString();
+            const totalStr = (total ?? 0).toLocaleString();
+            if (txt) txt.textContent = `${phaseText} ${doneStr}/${totalStr} (${pct.toFixed(1)}%)`;
+        }
 
         // 初始化Three.js场景
         function initThreeJS() {
@@ -543,7 +605,7 @@
                     return;
                 }
                 
-                processXYZData(text);
+                await processXYZDataAsync(text);
                 
             } catch (error) {
                 console.error('加载XYZ文件失败:', error);
@@ -562,80 +624,105 @@
                 const btn = document.querySelector('#loading button');
                 if (btn) btn.remove();
                 
-                setTimeout(() => {
-                    processXYZData(e.target.result);
+                setTimeout(async () => {
+                    await processXYZDataAsync(e.target.result);
                 }, 50);
             };
             reader.readAsText(file);
         }
         
-        // 处理XYZ数据 - 带降采样
-        function processXYZData(text) {
+        // 处理XYZ数据 - 带降采样（分块 + 进度条，避免几十万行时页面卡死）
+        async function processXYZDataAsync(text) {
             const lines = text.trim().split('\n');
-            const totalParticles = lines.length;
-            
-            // 存储所有有效点
+            const totalLines = lines.length;
+
+            const CHUNK = 5000; // 每批处理多少行；越大越快但越容易卡顿
+
+            // 阶段 1/3：解析与统计范围
+            setLoadingText('正在处理点云数据...');
+            updateLoadingProgress('解析', 0, totalLines);
+
             const allPoints = [];
             let minX = Infinity, maxX = -Infinity;
             let minY = Infinity, maxY = -Infinity;
             let minZ = Infinity, maxZ = -Infinity;
-            
-            for (let i = 0; i < lines.length; i++) {
-                const parts = lines[i].trim().split(/\s+/);
-                if (parts.length >= 3) {
-                    const x = parseFloat(parts[0]);
-                    const y = parseFloat(parts[1]);
-                    const z = parseFloat(parts[2]);
-                    
-                    if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
-                        allPoints.push({x, y, z, index: i});
-                        minX = Math.min(minX, x);
-                        maxX = Math.max(maxX, x);
-                        minY = Math.min(minY, y);
-                        maxY = Math.max(maxY, y);
-                        minZ = Math.min(minZ, z);
-                        maxZ = Math.max(maxZ, z);
+
+            for (let start = 0; start < totalLines; start += CHUNK) {
+                const end = Math.min(start + CHUNK, totalLines);
+                for (let i = start; i < end; i++) {
+                    const parts = lines[i].trim().split(/\s+/);
+                    if (parts.length >= 3) {
+                        const x = parseFloat(parts[0]);
+                        const y = parseFloat(parts[1]);
+                        const z = parseFloat(parts[2]);
+                        if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
+                            allPoints.push({ x, y, z });
+                            minX = Math.min(minX, x);
+                            maxX = Math.max(maxX, x);
+                            minY = Math.min(minY, y);
+                            maxY = Math.max(maxY, y);
+                            minZ = Math.min(minZ, z);
+                            maxZ = Math.max(maxZ, z);
+                        }
                     }
                 }
+                updateLoadingProgress('解析', end, totalLines);
+                await nextFrame();
             }
-            
-            // 居中
+
+            // 阶段 2/3：居中
             const centerX = (minX + maxX) / 2;
             const centerY = (minY + maxY) / 2;
             const centerZ = (minZ + maxZ) / 2;
-            
-            allPoints.forEach(p => {
-                p.x -= centerX;
-                p.y -= centerY;
-                p.z -= centerZ;
-            });
-            
-            // 保存原始数据
+
+            updateLoadingProgress('居中', 0, allPoints.length);
+            for (let start = 0; start < allPoints.length; start += CHUNK) {
+                const end = Math.min(start + CHUNK, allPoints.length);
+                for (let i = start; i < end; i++) {
+                    const p = allPoints[i];
+                    p.x -= centerX;
+                    p.y -= centerY;
+                    p.z -= centerZ;
+                }
+                updateLoadingProgress('居中', end, allPoints.length);
+                await nextFrame();
+            }
+
+            // 阶段 3/3：构建缓冲区（positions/colors）
             originalPositions = new Float32Array(allPoints.length * 3);
             particleColors = new Float32Array(allPoints.length * 3);
-            
-            const rangeZ = maxZ - minZ || 1;
-            
-            for (let i = 0; i < allPoints.length; i++) {
-                const p = allPoints[i];
-                originalPositions[i * 3] = p.x;
-                originalPositions[i * 3 + 1] = p.y;
-                originalPositions[i * 3 + 2] = p.z;
-                
-                const zNorm = (p.z - (minZ - centerZ)) / rangeZ;
-                const hue = 0.5 + zNorm * 0.2;
-                const color = new THREE.Color();
-                color.setHSL(Math.max(0, Math.min(1, hue)), 0.9, 0.6);
-                particleColors[i * 3] = color.r;
-                particleColors[i * 3 + 1] = color.g;
-                particleColors[i * 3 + 2] = color.b;
+
+            const rangeZ = (maxZ - minZ) || 1;
+            const color = new THREE.Color();
+
+            updateLoadingProgress('构建', 0, allPoints.length);
+            for (let start = 0; start < allPoints.length; start += CHUNK) {
+                const end = Math.min(start + CHUNK, allPoints.length);
+                for (let i = start; i < end; i++) {
+                    const p = allPoints[i];
+                    const base = i * 3;
+                    originalPositions[base] = p.x;
+                    originalPositions[base + 1] = p.y;
+                    originalPositions[base + 2] = p.z;
+
+                    const zNorm = (p.z - (minZ - centerZ)) / rangeZ;
+                    const hue = 0.5 + zNorm * 0.2;
+                    color.setHSL(Math.max(0, Math.min(1, hue)), 0.9, 0.6);
+                    particleColors[base] = color.r;
+                    particleColors[base + 1] = color.g;
+                    particleColors[base + 2] = color.b;
+                }
+                updateLoadingProgress('构建', end, allPoints.length);
+                await nextFrame();
             }
-            
+
             document.getElementById('original-count').textContent = allPoints.length;
-            
+
             // 根据密度设置创建显示粒子
+            setLoadingText('正在生成粒子...');
+            await nextFrame();
             updateParticleDensity();
-            
+
             document.getElementById('loading').classList.add('hidden');
         }
 
